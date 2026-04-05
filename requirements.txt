@@ -6,3 +6,4 @@ streamlit
 matplotlib
 requests
 python-multipart==0.0.7
+langchain
