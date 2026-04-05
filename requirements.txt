@@ -9,3 +9,5 @@ pandas>=2.1.1
 python-multipart>=0.0.6
 streamlit
 requests
+matplotlib
+Pillow
