@@ -44,10 +44,26 @@ if st.sidebar.button("Login"):
 
 st.title("🧠 ASPIRE AI Tutor")
 
-# Require login for the rest of the app
+# --- Landing Page (Visible when NOT logged in) ---
 if not st.session_state.user:
-    st.info("👈 Please login using the sidebar to start learning!")
-    st.stop() # Stops rendering the rest of the page until logged in
+    st.markdown("<h1 style='text-align: center; color: #4A90E2;'>Welcome to ASPIRE AI 🚀</h1>", unsafe_allow_html=True)
+    st.markdown("<h4 style='text-align: center; color: #A0AEC0;'>Your Personal, Data-Driven Smart Tutor</h4>", unsafe_allow_html=True)
+    st.divider()
+    
+    # Feature Showcase
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info("🧠 **Smart Chat & Quizzes**\n\nAsk questions or type 'Quiz me' to test your knowledge dynamically.")
+    with col2:
+        st.warning("📊 **Performance Tracking**\n\nASPIRE analyzes your weak points and graphs your learning progress.")
+    with col3:
+        st.success("📚 **Document Chat (RAG)**\n\nUpload your PDFs and let the AI teach you from your own notes.")
+        
+    st.divider()
+    st.markdown("<p style='text-align: center; font-size: 18px;'>👈 <b>Log in using the sidebar to access your dashboard!</b></p>", unsafe_allow_html=True)
+    
+    # Stop the app here so unauthenticated users don't see the chat UI
+    st.stop()
 
 # Chat memory
 if "messages" not in st.session_state:
