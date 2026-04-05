@@ -1,6 +1,8 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 import requests
+import speech_recognition as sr
+import pyttsx3
 
 st.set_page_config(page_title="ASPIRE AI", page_icon="🧠", layout="wide")
 st.sidebar.title("🔐 Login / Profile")
@@ -34,7 +36,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# === User input for chat / quiz / RAG query ===
+# === Chat / quiz / RAG query ===
 user_input = st.chat_input("Ask me anything… or type 'Quiz me' 😏")
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -60,7 +62,6 @@ if st.button("Show My Performance"):
     with col1: st.metric("Score", f"{score} / {total}")
     with col2: st.metric("Accuracy", f"{(score/total)*100:.1f}%" if total else "0%")
 
-    # Weak topics bar chart
     if weak_topics:
         st.subheader("📉 Weak Areas")
         topics = list(weak_topics.keys())
@@ -71,7 +72,6 @@ if st.button("Show My Performance"):
         ax.set_title("Weak Topics Analysis")
         st.pyplot(fig)
 
-    # Recommendation
     if perf["recommendation"]: st.warning(perf["recommendation"])
     else: st.success("You're doing great 😏")
 
@@ -86,7 +86,6 @@ if st.button("Show Leaderboard"):
 # === RAG: Upload file & ask questions ===
 st.divider()
 st.subheader("📚 Upload Study Materials (PDF / Image)")
-
 uploaded_file = st.file_uploader("Upload your file", type=["pdf", "png", "jpg", "jpeg"])
 if uploaded_file:
     files_res = requests.post(
@@ -104,3 +103,35 @@ if st.button("Get Answer from RAG"):
             params={"question": rag_query}
         ).json()
         st.info(f"RAG Answer: {answer_res['answer']}")
+
+# === Voice Interaction ===
+st.divider()
+st.subheader("🎤 Talk to ASPIRE AI")
+
+recognizer = sr.Recognizer()
+engine = pyttsx3.init()
+
+if st.button("🎙 Speak"):
+    with sr.Microphone() as source:
+        st.info("Listening… speak now 😏")
+        audio = recognizer.listen(source)
+
+    try:
+        text = recognizer.recognize_google(audio)
+        st.success(f"You said: {text}")
+
+        res = requests.get(
+            "https://YOUR_BACKEND_URL/chat",
+            params={"user_input": text}
+        ).json()
+
+        bot_reply = res["response"]
+        st.session_state.messages.append({"role": "assistant", "content": bot_reply})
+        st.write("🤖:", bot_reply)
+
+        # 🔊 Speak response
+        engine.say(bot_reply)
+        engine.runAndWait()
+
+    except:
+        st.error("Couldn't understand you… try again 😅")
