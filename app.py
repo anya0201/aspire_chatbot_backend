@@ -1,162 +1,207 @@
 import os
 import json
 import random
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from typing import List
+from pathlib import Path
+
+# 📦 HuggingFace / LLM imports
 import requests
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.chains import RetrievalQA
+from langchain.llms import HuggingFaceHub
 
-app = FastAPI()
-HF_API_KEY = os.getenv("HF_API_KEY")  # HuggingFace token
-
-# Allow CORS for your UI
+# 🌐 FastAPI setup
+app = FastAPI(title="ASPIRE AI Cloud Tutor")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
-# Load quiz and user data
-with open("quiz_data.json") as f:
+# 🔑 HuggingFace API
+HF_API_KEY = os.getenv("HF_API_KEY")
+HUGGINGFACE_HEADERS = {"Authorization": f"Bearer {HF_API_KEY}"}
+
+# 🗂 Paths
+DATA_DIR = Path("data")
+UPLOAD_DIR = DATA_DIR / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+QUIZ_FILE = DATA_DIR / "quiz_data.json"
+USERS_FILE = DATA_DIR / "users.json"
+
+# 🧠 Load quiz and users
+with open(QUIZ_FILE) as f:
     quiz_data = json.load(f)
 
-if os.path.exists("users.json"):
-    with open("users.json") as f:
+if USERS_FILE.exists():
+    with open(USERS_FILE) as f:
         users = json.load(f)
 else:
     users = {}
 
-# In-memory session
-current_question = None
-current_answer = None
-current_topic = None
-current_user = None
+# 🔹 In-memory RAG storage (FAISS per user)
+user_rag = {}
 
-uploaded_files = {}  # store file content per user for RAG
+# ----------------- HELPERS -----------------
+def save_users():
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f, indent=4)
 
-
-# === Helpers ===
-def detect_topic(user_input):
+def detect_topic(user_input: str):
     user_input = user_input.lower()
     for topic in quiz_data.keys():
         if topic in user_input:
             return topic
-    return "economics"
+    return "general"
 
-def call_hf_llm(prompt):
+def generate_explanation(question, answer, user_id):
+    """
+    Calls HF model to generate explanation
+    """
     API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-base"
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+    prompt = f"Question: {question}\nCorrect Answer: {answer}\nExplain simply for a student."
     payload = {"inputs": prompt}
     try:
-        res = requests.post(API_URL, headers=headers, json=payload).json()
-        return res[0]["generated_text"]
-    except:
-        return "(AI fallback) Sorry, couldn't generate explanation."
+        response = requests.post(API_URL, headers=HUGGINGFACE_HEADERS, json=payload)
+        return response.json()[0]["generated_text"]
+    except Exception:
+        return f"(AI fallback) Correct answer: {answer}"
 
+# ----------------- ENDPOINTS -----------------
 
-# === Routes ===
 @app.get("/")
 def home():
-    return {"message": "ASPIRE AI Cloud Backend Running 😏"}
+    return {"message": "ASPIRE AI Cloud Tutor Running 😏"}
 
-@app.get("/login")
-def login(username: str, password: str):
-    global current_user
+# 🔐 Login
+@app.post("/login")
+def login(username: str = Form(...), password: str = Form(...)):
     if username in users and users[username]["password"] == password:
-        current_user = username
         return {"message": f"Welcome {username} 😏"}
-    return {"message": "Invalid credentials"}
+    elif username not in users:
+        # create new user
+        users[username] = {
+            "password": password,
+            "score": 0,
+            "total": 0,
+            "weak_topics": {},
+        }
+        save_users()
+        return {"message": f"New account created for {username} 😎"}
+    else:
+        return JSONResponse(status_code=401, content={"message": "Invalid credentials"})
 
-@app.get("/chat")
-def chat(user_input: str):
-    global current_question, current_answer, current_topic, current_user
-    if not current_user:
-        return {"response": "Login first 😏"}
+# 🎯 Chat / Quiz
+@app.post("/chat")
+async def chat(user_input: str = Form(...), username: str = Form(...)):
+    if username not in users:
+        return JSONResponse(status_code=401, content={"response": "Login first 😏"})
 
-    user_data = users.get(current_user)
-    if not user_data:
-        users[current_user] = {"score":0, "total":0, "weak_topics":{}, "files":[]}
-        user_data = users[current_user]
+    user_data = users[username]
 
-    # Answering quiz
-    if current_answer:
+    # if answering a question
+    if "current_question" in user_data and user_data["current_question"]:
         user_data["total"] += 1
-        if user_input.lower() in current_answer.lower():
+        correct_answer = user_data["current_answer"]
+        if user_input.lower() in correct_answer.lower():
             user_data["score"] += 1
             response = "Correct 😏 You're getting sharp!"
         else:
-            topic = current_topic
-            user_data["weak_topics"][topic] = user_data["weak_topics"].get(topic,0)+1
-            # AI explanation
-            response = call_hf_llm(f"Question: {current_question}\nAnswer: {current_answer}\nExplain simply for a student.")
+            topic = user_data["current_topic"]
+            user_data["weak_topics"][topic] = user_data["weak_topics"].get(topic, 0) + 1
+            response = generate_explanation(user_data["current_question"], correct_answer, username)
 
-        # Reset
-        current_question = None
-        current_answer = None
-        current_topic = None
-
-        # Save user
-        with open("users.json","w") as f:
-            json.dump(users,f,indent=4)
-
+        # reset
+        user_data["current_question"] = None
+        user_data["current_answer"] = None
+        user_data["current_topic"] = None
+        save_users()
         return {"response": response, "score": user_data["score"], "total": user_data["total"]}
 
-    # Normal chat
-    # detect quiz start
-    if "quiz" in user_input.lower():
+    # normal flow
+    intent = "start_quiz" if "quiz" in user_input.lower() else "chat"
+
+    if intent == "start_quiz":
         topic = detect_topic(user_input)
-        question_obj = random.choice(quiz_data[topic])
-        current_question = question_obj["question"]
-        current_answer = question_obj["answer"]
-        current_topic = topic
-        return {"response": f"{topic.upper()} QUIZ 🎯\n\n{current_question}"}
+        question_obj = random.choice(quiz_data.get(topic, quiz_data["general"]))
+        user_data["current_question"] = question_obj["question"]
+        user_data["current_answer"] = question_obj["answer"]
+        user_data["current_topic"] = topic
+        save_users()
+        return {"response": f"{topic.upper()} QUIZ 🎯\n\n{question_obj['question']}"}
 
-    # Otherwise, just reply using AI explanation (simple chatbot style)
-    return {"response": call_hf_llm(f"Chat: {user_input}")}
+    # RAG query fallback
+    if username in user_rag:
+        retriever = user_rag[username]["retriever"]
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=HuggingFaceHub(repo_id="google/flan-t5-base", model_kwargs={"temperature":0.3}),
+            retriever=retriever
+        )
+        answer = qa_chain.run(user_input)
+        return {"response": answer}
 
+    return {"response": f"🤖 {user_input} (chat fallback)"}
+
+# 📚 Upload files for RAG
+@app.post("/upload")
+async def upload_file(username: str = Form(...), files: List[UploadFile] = File(...)):
+    if username not in users:
+        return JSONResponse(status_code=401, content={"message": "Login first 😏"})
+
+    docs_text = []
+    for f in files:
+        path = UPLOAD_DIR / f"{username}_{f.filename}"
+        content = await f.read()
+        with open(path, "wb") as out:
+            out.write(content)
+        docs_text.append(content.decode("utf-8", errors="ignore"))
+
+    # Split into chunks
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    chunks = text_splitter.split_text(" ".join(docs_text))
+
+    # Create embeddings
+    embeddings = HuggingFaceEmbeddings()
+    vectorstore = FAISS.from_texts(chunks, embeddings)
+
+    user_rag[username] = {"vectorstore": vectorstore, "retriever": vectorstore.as_retriever()}
+
+    return {"message": f"Uploaded {len(files)} files and ready to answer questions 😏"}
+
+# 📊 Performance
 @app.get("/performance")
-def performance():
-    if not current_user:
-        return {"message":"Login first"}
-    user_data = users[current_user]
+def performance(username: str):
+    if username not in users:
+        return JSONResponse(status_code=401, content={"message": "Login first 😏"})
+    user_data = users[username]
     recommendation = None
     if user_data["weak_topics"]:
         weakest = max(user_data["weak_topics"], key=user_data["weak_topics"].get)
-        recommendation = f"Revise {weakest} first 😏"
-    return {"score": user_data["score"], "total": user_data["total"],
-            "weak_topics": user_data["weak_topics"], "recommendation": recommendation}
+        recommendation = f"You should revise {weakest} first… you're slipping there 😏"
+    return {
+        "score": user_data["score"],
+        "total": user_data["total"],
+        "weak_topics": user_data["weak_topics"],
+        "recommendation": recommendation
+    }
 
+# 🏆 Leaderboard
 @app.get("/leaderboard")
 def leaderboard():
     ranking = []
-    for u,data in users.items():
+    for username, data in users.items():
         score = data["score"]
         total = data["total"]
-        accuracy = (score/total)*100 if total else 0
-        ranking.append({"user":u, "score":score, "accuracy":round(accuracy,2)})
-    ranking.sort(key=lambda x: (x["score"], x["accuracy"]), reverse=True)
+        accuracy = (score / total) * 100 if total else 0
+        ranking.append({"user": username, "score": score, "accuracy": round(accuracy, 2)})
+    ranking = sorted(ranking, key=lambda x: (x["score"], x["accuracy"]), reverse=True)
     return {"leaderboard": ranking}
 
-# === RAG: Upload files & query ===
-@app.post("/upload_file")
-def upload_file(file: UploadFile = File(...)):
-    if not current_user:
-        return {"message":"Login first"}
-    content = file.file.read()
-    if current_user not in uploaded_files:
-        uploaded_files[current_user] = []
-    uploaded_files[current_user].append({"name":file.filename, "content":content})
-    return {"message": f"{file.filename} uploaded successfully 😏"}
-
-@app.post("/query_rag")
-def query_rag(question: str):
-    if not current_user:
-        return {"answer":"Login first 😏"}
-    user_files = uploaded_files.get(current_user, [])
-    if not user_files:
-        return {"answer":"Upload files first 😅"}
-    # For simplicity: concatenate text and ask LLM
-    combined_text = b"".join([f["content"] for f in user_files]).decode(errors="ignore")
-    prompt = f"User uploaded documents:\n{combined_text}\n\nQuestion: {question}\nAnswer simply for a student:"
-    answer = call_hf_llm(prompt)
-    return {"answer": answer}
+# ----------------- END -----------------
