@@ -1,26 +1,14 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 import requests
-import speech_recognition as sr
-import pyttsx3
 from PIL import Image
+
+# --- CONFIGURATION ---
+# Replace this if your Render URL is different!
+BACKEND_URL = "https://aspire-chatbot.onrender.com"
 
 # Page config
 st.set_page_config(page_title="ASPIRE AI Tutor", page_icon="🧠", layout="wide")
-
-# 🎨 Sidebar: Login
-st.sidebar.title("🔐 Login / Session")
-username = st.sidebar.text_input("Username")
-password = st.sidebar.text_input("Password", type="password")
-
-if st.sidebar.button("Login"):
-    res = requests.get(
-        "https://aspire-chatbot.onrender.com",  
-        params={"username": username, "password": password}
-    ).json()
-    st.sidebar.success(res["message"])
-    if "Welcome" in res["message"]:
-        st.session_state.user = username
 
 # Dark mode styling
 st.markdown("""
@@ -31,7 +19,35 @@ body { background-color: #0e1117; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
+# 🎨 Sidebar: Login
+st.sidebar.title("🔐 Login / Session")
+
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
+
+if st.sidebar.button("Login"):
+    try:
+        # FIXED: Added /login endpoint
+        res = requests.get(f"{BACKEND_URL}/login", params={"username": username, "password": password})
+        data = res.json()
+        
+        if res.status_code == 200 and "Welcome" in data.get("message", ""):
+            st.session_state.user = username
+            st.sidebar.success(data["message"])
+        else:
+            st.sidebar.error(data.get("message", "Invalid credentials"))
+    except Exception as e:
+        st.sidebar.error("Backend is currently offline or waking up...")
+
 st.title("🧠 ASPIRE AI Tutor")
+
+# Require login for the rest of the app
+if not st.session_state.user:
+    st.info("👈 Please login using the sidebar to start learning!")
+    st.stop() # Stops rendering the rest of the page until logged in
 
 # Chat memory
 if "messages" not in st.session_state:
@@ -49,11 +65,17 @@ if user_input:
     with st.chat_message("user"):
         st.write(user_input)
 
-    response = requests.get(
-        "https://YOUR_DEPLOYED_BACKEND_URL/chat",
-        params={"user_input": user_input}
-    ).json()
-    bot_reply = response["response"]
+    with st.spinner("ASPIRE is thinking..."):
+        try:
+            # FIXED: Added username to params and used the actual backend URL
+            response = requests.get(
+                f"{BACKEND_URL}/chat",
+                params={"username": st.session_state.user, "user_input": user_input}
+            )
+            bot_reply = response.json().get("response", "Error connecting to AI.")
+        except:
+            bot_reply = "Backend connection failed. Is Render awake?"
+
     st.session_state.messages.append({"role": "assistant", "content": bot_reply})
     with st.chat_message("assistant"):
         st.write(bot_reply)
@@ -63,75 +85,63 @@ st.divider()
 st.subheader("📊 Performance Dashboard")
 
 if st.button("Show My Performance"):
-    perf = requests.get(f"https://YOUR_DEPLOYED_BACKEND_URL/performance").json()
-    score, total = perf["score"], perf["total"]
-    weak_topics = perf["weak_topics"]
+    # FIXED: Added username to params
+    res = requests.get(f"{BACKEND_URL}/performance", params={"username": st.session_state.user})
+    if res.status_code == 200:
+        perf = res.json()
+        score, total = perf.get("score", 0), perf.get("total", 0)
+        weak_topics = perf.get("weak_topics", {})
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Score", f"{score} / {total}")
-    with col2:
-        st.metric("Accuracy", f"{(score/total)*100:.1f}%" if total else "0%")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Score", f"{score} / {total}")
+        with col2:
+            st.metric("Accuracy", f"{(score/total)*100:.1f}%" if total > 0 else "0%")
 
-    # Weak topics chart
-    if weak_topics:
-        st.subheader("📉 Weak Topics")
-        topics, values = list(weak_topics.keys()), list(weak_topics.values())
-        fig, ax = plt.subplots()
-        ax.bar(topics, values, color="tomato")
-        ax.set_ylabel("Mistakes")
-        ax.set_title("Weak Topic Analysis")
-        st.pyplot(fig)
+        # Weak topics chart
+        if weak_topics:
+            st.subheader("📉 Weak Topics")
+            topics, values = list(weak_topics.keys()), list(weak_topics.values())
+            fig, ax = plt.subplots()
+            ax.bar(topics, values, color="tomato")
+            ax.set_ylabel("Mistakes")
+            ax.set_title("Weak Topic Analysis")
+            st.pyplot(fig)
 
-    # Recommendation
-    if perf.get("recommendation"):
-        st.warning(perf["recommendation"])
-    else:
-        st.success("You're doing great 😏")
+        # Recommendation
+        if perf.get("recommendation"):
+            st.warning(perf["recommendation"])
+        else:
+            st.success("You're doing great 😏")
 
 # 🏆 Leaderboard
 st.divider()
 st.subheader("🏆 Leaderboard")
 if st.button("Show Leaderboard"):
-    data = requests.get("https://YOUR_DEPLOYED_BACKEND_URL/leaderboard").json()
-    for i, user in enumerate(data["leaderboard"], start=1):
-        st.write(f"{i}. {user['user']} — Score: {user['score']} | Accuracy: {user['accuracy']}%")
-
-# 🎤 Voice Interaction
-recognizer = sr.Recognizer()
-st.divider()
-st.subheader("🎤 Talk to ASPIRE AI")
-
-if st.button("Speak"):
-    with sr.Microphone() as source:
-        st.info("Listening... speak now 😏")
-        audio = recognizer.listen(source)
-
-    try:
-        text = recognizer.recognize_google(audio)
-        st.success(f"You said: {text}")
-
-        res = requests.get(
-            "https://YOUR_DEPLOYED_BACKEND_URL/chat",
-            params={"user_input": text}
-        ).json()
-        bot_reply = res["response"]
-        st.write("🤖:", bot_reply)
-
-        engine = pyttsx3.init()
-        engine.say(bot_reply)
-        engine.runAndWait()
-
-    except:
-        st.error("Couldn't understand you… try again 😅")
+    res = requests.get(f"{BACKEND_URL}/leaderboard")
+    if res.status_code == 200:
+        data = res.json()
+        for i, user in enumerate(data.get("leaderboard", []), start=1):
+            st.write(f"{i}. {user['user']} — Score: {user['score']} | Accuracy: {user['accuracy']}%")
 
 # 📚 RAG File Upload
 st.divider()
 st.subheader("📂 Upload Files for AI Q&A")
 uploaded_file = st.file_uploader("Upload PDF / Image", type=["pdf","png","jpg","jpeg"])
-if uploaded_file:
-    files = {"file": uploaded_file.getvalue()}
-    response = requests.post("https://YOUR_DEPLOYED_BACKEND_URL/upload", files=files).json()
-    st.success(response.get("message","File uploaded successfully 😏"))
+if uploaded_file and st.button("Upload to Backend"):
+    with st.spinner("Uploading..."):
+        # FIXED: Pass username and correct file formatting for FastAPI
+        files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+        response = requests.post(
+            f"{BACKEND_URL}/upload_file", # FIXED: correct endpoint name
+            params={"username": st.session_state.user},
+            files=files
+        )
+        st.success(response.json().get("message","File uploaded successfully 😏"))
 
 st.info("Everything is connected! Ask questions or take quizzes and watch the AI tutor flex 😎")
+
+# --- NOTE ON VOICE ---
+# pyttsx3 and speech_recognition require local system hardware. 
+# They will crash a cloud server. To do voice in Streamlit Cloud, 
+# look into libraries like 'streamlit-mic-recorder' or standard HTML5 audio components.
