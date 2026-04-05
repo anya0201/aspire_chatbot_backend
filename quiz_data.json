@@ -1,0 +1,20 @@
+{
+  "economics": [
+    {
+      "question": "What is demand?",
+      "answer": "quantity of goods consumers are willing to buy"
+    }
+  ],
+  "math": [
+    {
+      "question": "What is 5 + 7?",
+      "answer": "12"
+    }
+  ],
+  "physics": [
+    {
+      "question": "What is force?",
+      "answer": "push or pull"
+    }
+  ]
+}

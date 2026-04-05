@@ -1,0 +1,19 @@
+{
+  "intents": [
+    {
+      "tag": "greeting",
+      "patterns": ["Hi", "Hello", "Hey"],
+      "responses": ["Hey there!", "Hello! Ready to study?"]
+    },
+    {
+      "tag": "explain_concept",
+      "patterns": ["What is demand?", "Explain profit and loss"],
+      "responses": ["Demand is the quantity people want to buy at a price."]
+    },
+    {
+      "tag": "start_quiz",
+      "patterns": ["Quiz me", "Test me", "Ask questions"],
+      "responses": ["Alright, let's start! What is 2 + 2?"]
+    }
+  ]
+}
