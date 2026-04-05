@@ -7,3 +7,4 @@ matplotlib
 requests
 python-multipart==0.0.7
 langchain
+langchain==0.1.5
