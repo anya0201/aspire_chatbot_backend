@@ -1,13 +1,18 @@
-fastapi>=0.95.2
-uvicorn[standard]>=0.22.0
-httpx>=0.28.0
-pydantic>=2.12.5
-requests>=2.33.1
-scikit-learn>=1.3.1
-numpy>=1.27.0
-pandas>=2.1.1
-python-multipart>=0.0.6
-streamlit
-requests
-matplotlib
-Pillow
+fastapi==0.110.0
+uvicorn[standard]==0.27.1
+httpx==0.27.0
+
+pydantic==2.6.4
+python-multipart==0.0.9
+
+# ML / NLP
+scikit-learn==1.4.2
+numpy==1.26.4
+
+# Optional but safe extras
+spacy==3.7.4
+rich==13.7.1
+
+# Voice (optional, won’t break deploy)
+pyttsx3==2.90
+SpeechRecognition==3.10.1
